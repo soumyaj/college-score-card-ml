@@ -1,0 +1,165 @@
+---
+title: "Decision Trees"
+author: "Soumya Janardhanan"
+date: "4/4/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Data exploration:
+
+```{r}
+library(tree)
+setwd('~/workspace/ml/college-score-card-ml')
+college_data <- read.csv("final_dataset_imputed.csv",header=TRUE)
+college_data$CAT_EARN<-cut(college_data$MN_EARN_WNE_P10, c(0,30000,75000,max(college_data$MN_EARN_WNE_P10)),labels=c(0,1,2))
+
+cols.num <- c("HCM2","HBCU","PREDDEG","CONTROL","PBI","ANNHI","TRIBAL","AANAPII","HSI","NANTI","MENONLY","WOMENONLY")
+
+regtrain <- read.csv("final_train.csv",header = TRUE)
+regtrain[cols.num] <- lapply(regtrain[cols.num], factor)
+
+regtest <- read.csv("final_test.csv",header = TRUE)
+regtest[cols.num] <- lapply(regtest[cols.num], factor)
+
+regtrain <- subset(regtrain, select = -c(CAT_EARN) )
+regtest <- subset(regtest, select = -c(CAT_EARN) )
+
+classtrain <- read.csv("final_train.csv",header = TRUE)
+classtrain[cols.num] <- lapply(classtrain[cols.num], factor)
+
+classtest <- read.csv("final_test.csv",header = TRUE)
+classtest[cols.num] <- lapply(classtest[cols.num], factor)
+
+classtrain$CAT_EARN <- as.factor(classtrain$CAT_EARN)
+classtest$CAT_EARN <- as.factor(classtest$CAT_EARN)
+classtrain <- subset(classtrain, select = -c(MN_EARN_WNE_P10) )
+classtest <- subset(classtest, select = -c(MN_EARN_WNE_P10) )
+
+set.seed(123)
+## 70% of the sample size
+smp_size <- floor(0.70 * nrow(regtrain))
+train_ind <- sample(seq_len(nrow(regtrain)), size = smp_size)
+
+regtrain <- regtrain[train_ind, ]
+regvalidation <- regtrain[-train_ind, ]
+
+classtrain <- classtrain[train_ind, ]
+classvalidation <- classtrain[-train_ind, ]
+```
+
+## DECISION TREES
+Fit a tree to the training data, with CAT_EARN as the response and the other variables as predictors. Use the summary() function to produce summary statistics about the tree, and describe the results obtained. What is the training error rate? How many terminal nodes does the tree have?
+
+
+```{r}
+library("rpart")
+library("rpart.plot")
+college.tree.fit <- rpart(CAT_EARN~., data=classtrain)
+summary(college.tree.fit)
+rpart.plot(college.tree.fit)
+```
+
+
+(d) Create a plot of the tree, and interpret the results.
+
+```{r}
+plot(college.tree.fit)
+text(college.tree.fit, all = F)
+```
+
+(e) Predict the response on the test data, and produce a confusion matrix comparing the test labels to the predicted test labels. What is the test error rate?
+
+```{r}
+college.tree.predict= predict(college.tree.fit,data=classtest)
+college.tree.predict
+```
+
+(f) Apply the cv.tree() function to the training set in order to determine the optimal tree size.
+
+```{r}
+tree.fit <-tree(CAT_EARN ~. ,classtrain)
+summary(tree.fit)
+college.cv.tree.fit <- cv.tree(tree.fit)
+college.best.size <- college.cv.tree.fit$size[which(college.cv.tree.fit$dev==min(college.cv.tree.fit$dev))] # which size is better?
+college.best.size
+
+```
+
+## Plot of deviance vs tree size
+```{r}
+plot(college.cv.tree.fit)
+```
+
+Best size
+
+```{r}
+college.best.size
+```
+
+Prune tree with best size obtained by cross validation.
+
+```{r}
+prune.college.tree <- prune.tree(tree.fit, best = college.best.size)
+summary(prune.college.tree)
+plot(prune.college.tree)
+text(prune.college.tree, pretty = 0)
+```
+
+TODO: Compare the training error rates between the pruned and un- pruned trees. Which is higher?
+
+```{r}
+summary(prune.sa.tree)
+summary(tree.fit)
+```
+
+
+```{r}
+prune.college.tree2 <- prune.tree(tree.fit, best = 5)
+plot(prune.college.tree2)
+text(prune.college.tree2, pretty = 0)
+summary(prune.college.tree2)
+```
+
+## Random forest
+```{r}
+x<- as.matrix(classtrain[, names(classtrain) != "CAT_EARN"])
+y<- as.factor(classtrain$CAT_EARN)
+
+# Use the tuneRF function to determine an ideal value for the mtry parameter
+mtry <- tuneRF(x,y, mtryStart=1, ntreeTry=50, stepFactor=2, improve=0.05, trace=TRUE, plot=TRUE, doBest=FALSE)
+# The ideal mtry value was found to be 8
+# Create a random forest model using the target field as the response and all features as inputs
+ptm4 <- proc.time()
+fit4 <- randomForest(as.factor(MN_EARN_WNE_P10) ~ ., data=regtrain, importance=TRUE, ntree=100, mtry=8)
+fit4.time <- proc.time() - ptm4
+# Create a dotchart of variable/feature importance as measured by a Random Forest
+varImpPlot(fit4)
+# Test the randomForest model on the holdout test dataset
+fit4.pred <- predict(fit4, classvalidation, type="response")
+table(fit4.pred,classvalidation$CAT_EARN)
+fit4$error <- 1-(sum(fit4.pred==classvalidation$CAT_EARN)/length(classvalidation$CAT_EARN))
+fit4$error
+```
+
+## ADA boosting
+
+```{r}
+library(adabag);
+adaboost<-boosting(CAT_EARN~., data=classtrain, boos=TRUE, mfinal=20,coeflearn='Breiman')
+summary(adaboost)
+adaboost$trees
+adaboost$weights
+adaboost$importance
+errorevol(adaboost,classtrain)
+ada.predict <- predict(adaboost,classvalidation)
+t1<-adaboost$trees[[1]]
+library(tree)
+plot(t1)
+text(t1,pretty=0)
+```
+
+
